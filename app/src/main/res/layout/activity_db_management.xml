@@ -21,6 +21,22 @@
             grid:columnCount="2">
 
             <Button
+                android:id="@+id/pushDBButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Seekintoo Sync"
+                grid:layout_columnSpan="2"
+                grid:layout_columnWeight="1" />
+            <TextView
+                android:id="@+id/db_push_intro"
+                android:layout_width="fill_parent"
+                android:layout_height="wrap_content"
+                android:text="Must be on the company network (IE radio)\n\n"
+                android:textAppearance="?android:attr/textAppearanceSmall"
+                grid:layout_columnSpan="2"
+                grid:layout_columnWeight="1" />
+
+            <Button
                 android:id="@+id/exportDBButton"
                 android:text="Export DB"
                 grid:layout_column="0"

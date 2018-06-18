@@ -18,23 +18,36 @@
 package nodomain.freeyourgadget.gadgetbridge.activities;
 
 import android.app.AlertDialog;
+import android.content.Context;
 import android.content.DialogInterface;
 import android.content.SharedPreferences;
 import android.database.sqlite.SQLiteOpenHelper;
+import android.os.AsyncTask;
 import android.os.Bundle;
 import android.preference.PreferenceManager;
 import android.support.v4.app.NavUtils;
+import android.text.InputType;
 import android.view.MenuItem;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.BufferedOutputStream;
+import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLEncoder;
 
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
@@ -50,6 +63,7 @@ public class DbManagementActivity extends AbstractGBActivity {
     private static SharedPreferences sharedPrefs;
     private ImportExportSharedPreferences shared_file = new ImportExportSharedPreferences();
 
+    private Button pushDBButton;
     private Button exportDBButton;
     private Button importDBButton;
     private Button deleteOldActivityDBButton;
@@ -64,6 +78,13 @@ public class DbManagementActivity extends AbstractGBActivity {
         dbPath = (TextView) findViewById(R.id.activity_db_management_path);
         dbPath.setText(getExternalPath());
 
+        pushDBButton = (Button) findViewById(R.id.pushDBButton);
+        pushDBButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pushDBStep1();
+            }
+        });
         exportDBButton = (Button) findViewById(R.id.exportDBButton);
         exportDBButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -150,6 +171,50 @@ public class DbManagementActivity extends AbstractGBActivity {
         }
     }
 
+    private void pushDBStep1() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("Enter the URL");
+
+        // Set up the input
+        final EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        input.setText("http://10.20.31.140:8080/db-upload");
+        builder.setView(input);
+
+        // Set up buttons
+        builder.setPositiveButton("OK", new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialogInterface, int i) {
+                String text = input.getText().toString();
+                pushDBStep2(text);
+            }
+        });
+        builder.setNegativeButton("Cancel", new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialogInterface, int i) {
+                dialogInterface.cancel();
+            }
+        });
+
+        // Show
+        builder.show();
+    }
+
+    private void pushDBStep2(String path) {
+        try (DBHandler dbHandler = GBApplication.acquireDB()) {
+            // Export to a string
+            exportShared(); // I think this just updates shared preferences
+            DBHelper helper = new DBHelper(this);
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            helper.exportDB(dbHandler, out);
+            out.close();
+            new DBPostTask(path, this).execute(out.toByteArray());
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            GB.toast(this, "Failed to get data for push", Toast.LENGTH_LONG, GB.ERROR, ex);
+        }
+    }
+
     private void importDB() {
         new AlertDialog.Builder(this)
                 .setCancelable(true)
@@ -233,5 +298,63 @@ public class DbManagementActivity extends AbstractGBActivity {
                 return true;
         }
         return super.onOptionsItemSelected(item);
+    }
+
+    private class DBPostTask extends AsyncTask<byte[], Integer, Integer> {
+
+        private String path;
+        private Context mContext;
+
+        public DBPostTask(String path, Context context) {
+            this.path = path;
+            mContext = context;
+        }
+
+        protected Integer doInBackground(byte[]... datas) {
+            byte[] data = datas[0];
+
+            try { // https://stackoverflow.com/questions/11766878/sending-files-using-post-with-httpurlconnection
+                // Create connection
+                URL url = new URL(path);
+                HttpURLConnection client = (HttpURLConnection) url.openConnection();
+                client.setRequestMethod("POST");
+                client.setRequestProperty("Content-Type", "multipart/form-data;boundary=*****");
+                client.setDoInput(true);
+                client.setDoOutput(true);
+
+                // Write POST data (wrapped as a file)
+                OutputStream out = client.getOutputStream();
+                out.write("--*****\r\n".getBytes());
+                out.write((
+                        "Content-Disposition: form-data; name=\\\"" +
+                                "test" + "\";filename=\"" +
+                                "test.sqlite" + "\"\r\n").getBytes());
+                out.write("\r\n".getBytes());
+                out.write(data); // The data
+                out.write("\r\n".getBytes());
+                out.write("--*****--\r\n".getBytes());
+                out.flush();
+                out.close();
+
+                // Complete
+                client.connect();
+
+                if (client.getResponseCode() != 200) {
+                    throw new RuntimeException("Non-200 response code.");
+                }
+
+                // Notify success
+                GB.toast(mContext, "Database pushed", Toast.LENGTH_LONG, GB.INFO);
+            } catch (Exception ex) {
+                ex.printStackTrace();
+                GB.toast(mContext, "Failed to push data", Toast.LENGTH_LONG, GB.ERROR, ex);
+            }
+
+
+            return 0;
+        }
+
+        protected void onProgressUpdate(Integer progress) {}
+        protected void onPostExecute(Integer result) {}
     }
 }
